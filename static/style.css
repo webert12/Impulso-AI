@@ -1,1 +1,12 @@
 
+*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eaf0ff;font-family:Inter,Arial,sans-serif}
+.top{padding:42px 6%;border-bottom:1px solid #202943;background:#10172b}
+.eyebrow{letter-spacing:2px;font-size:12px;opacity:.7}.top h1{margin:8px 0;font-size:34px}.top p{margin:0;opacity:.75}
+main{max-width:1200px;margin:auto;padding:28px 18px}.panel,.card,.hero-card{background:#121a30;border:1px solid #263252;border-radius:18px;padding:20px;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}label{display:flex;flex-direction:column;gap:7px;font-size:13px;color:#b9c5e5}.wide{grid-column:1/-1}
+input,select{background:#0b1122;border:1px solid #2c395c;color:#fff;border-radius:10px;padding:13px;font-size:14px}
+button{width:100%;margin-top:18px;padding:15px;border:0;border-radius:11px;background:#4f7cff;color:white;font-weight:800;cursor:pointer}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card h3{margin-top:0}.item{padding:12px 0;border-bottom:1px solid #26304a;line-height:1.45}.item:last-child{border:0}
+.tag{font-size:11px;letter-spacing:1px;color:#7fa1ff}.hero-card h2{margin:8px 0}.ab{display:grid;grid-template-columns:130px 1fr 1fr 170px;gap:10px;padding:12px 0;border-bottom:1px solid #29334d}.ab small{opacity:.65}.warning{border-color:#68572b}.hidden{display:none}
+#status{margin-top:10px;font-size:13px;opacity:.75}
+@media(max-width:760px){.grid,.cols{grid-template-columns:1fr}.wide{grid-column:auto}.ab{grid-template-columns:1fr}.top h1{font-size:27px}}
