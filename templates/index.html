@@ -1,1 +1,89 @@
 
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Growth Copilot</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <div class="eyebrow">GROWTH COPILOT</div>
+    <h1>Gerador de campanhas e criativos</h1>
+    <p>Transforme um produto em uma campanha pronta para testar, medir e melhorar.</p>
+  </div>
+</header>
+<main>
+<section class="panel">
+  <div class="grid">
+    <label>Produto
+      <select id="product">
+        <option value="vision_pro">Vision Pro</option>
+        <option value="salao">Fio&Caixa - Gestão & Agendamento</option>
+      </select>
+    </label>
+    <label>Objetivo
+      <select id="objective">
+        <option value="whatsapp">Conversas no WhatsApp</option>
+        <option value="leads">Leads</option>
+        <option value="demo">Demonstrações/Testes</option>
+        <option value="sale">Vendas</option>
+        <option value="content">Conteúdo</option>
+      </select>
+    </label>
+    <label>Público-alvo
+      <input id="audience" placeholder="Ex.: donas de salão de 25 a 50 anos">
+    </label>
+    <label>Oferta
+      <input id="offer" placeholder="Ex.: teste grátis por 7 dias">
+    </label>
+    <label>Preço
+      <input id="price" placeholder="Ex.: R$ 49/mês">
+    </label>
+    <label>Canais
+      <input id="channel" value="Instagram + WhatsApp">
+    </label>
+    <label class="wide">Tom
+      <input id="tone" value="profissional, direto e humano">
+    </label>
+  </div>
+  <button id="generate">GERAR CAMPANHA</button>
+  <div id="status"></div>
+</section>
+<section id="result" class="hidden"></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function list(title, items){return `<div class="card"><h3>${esc(title)}</h3>${items.map(x=>`<div class="item">${esc(x)}</div>`).join("")}</div>`}
+function render(d){
+ let r = $("result"); r.classList.remove("hidden");
+ r.innerHTML = `
+ <div class="hero-card"><span class="tag">CAMPANHA</span><h2>${esc(d.campaign.name)}</h2>
+ <p><b>Objetivo:</b> ${esc(d.campaign.objective)} · <b>Canais:</b> ${esc(d.campaign.channels)}</p>
+ <p><b>Público:</b> ${esc(d.campaign.audience)}</p></div>
+ <div class="cols">
+ ${list("Conjuntos de anúncios", d.ad_sets.map(a=>a.name+" — "+a.interests.join(", ")))}
+ ${list("Interesses", [...new Set(d.ad_sets.flatMap(a=>a.interests))])}
+ </div>
+ <div class="cols">${list("Copies",d.copies)}${list("Títulos",d.titles)}</div>
+ <div class="cols">${list("Hooks / ideias de abertura",d.hooks)}${list("CTA",d.ctas)}</div>
+ <div class="cols">${list("Ideias de criativos",d.creatives)}${list("Roteiros de vídeo",d.scripts)}</div>
+ <div class="card"><h3>Variações A/B</h3>${d.ab_tests.map(t=>`<div class="ab"><b>${esc(t.test)}</b><span>A: ${esc(t.A)}</span><span>B: ${esc(t.B)}</span><small>Métrica: ${esc(t.metric)}</small></div>`).join("")}</div>
+ <div class="card warning"><h3>Regras de comunicação</h3>${d.compliance.map(x=>`<div class="item">${esc(x)}</div>`).join("")}</div>
+ `;
+ r.scrollIntoView({behavior:"smooth"});
+}
+$("generate").onclick=async()=>{
+ $("status").textContent="Gerando...";
+ const payload={product:$("product").value,objective:$("objective").value,audience:$("audience").value,offer:$("offer").value,price:$("price").value,channel:$("channel").value,tone:$("tone").value};
+ try{
+   const res=await fetch("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+   render(await res.json()); $("status").textContent="Campanha gerada.";
+ }catch(e){$("status").textContent="Erro ao gerar. Verifique o servidor."}
+}
+</script>
+</body>
+</html>
