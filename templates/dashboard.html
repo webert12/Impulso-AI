@@ -8,11 +8,11 @@
 <label>Público<input id="audience" placeholder="Ex.: donas de salão"></label><label>Oferta<input id="offer" placeholder="Ex.: teste grátis / demonstração"></label>
 <label class="wide">Tom<input id="tone" value="profissional, direto e humano"></label></div><button onclick="generateCampaign()">GERAR CAMPANHA</button></section>
 <section id="campaign" class="panel hidden"></section>
-<section class="panel"><h2>2. Gerar vídeo curto</h2><p class="muted">A campanha vira um prompt visual. Com a chave do provedor configurada, o vídeo pode ser gerado pelo próprio sistema.</p><div class="grid">
+<section class="panel"><h2>2. Gerar vídeo curto</h2><p class="muted">O GrowthPilot cria o roteiro, envia diretamente para a Runway e acompanha a geração até o vídeo ficar pronto.</p><div class="grid">
 <label>Estilo<select id="style"><option>UGC comercial</option><option>Demonstração de produto</option><option>Cinematográfico</option><option>Storytelling</option></select></label>
 <label>Duração<select id="duration"><option value="5">5 segundos</option><option value="8">8 segundos</option><option value="10">10 segundos</option></select></label>
-<label>Formato<select id="ratio"><option value="720:1280">9:16 Vertical</option><option value="1280:720">16:9 Horizontal</option><option value="1080:1080">1:1 Quadrado</option></select></label>
-<label class="wide">Cena/ideia<input id="scene" placeholder="Ex.: mostrar a tela do sistema e o antes/depois da organização"></label></div><button onclick="generateVideo()">🎬 GERAR VÍDEO</button><div id="videoResult"></div></section>
+<label>Formato<select id="ratio"><option value="720:1280">9:16 Vertical</option><option value="1280:720">16:9 Horizontal</option></select></label>
+<label class="wide">Cena/ideia<input id="scene" placeholder="Ex.: mostrar a tela do sistema e o antes/depois da organização"></label><label class="wide">CTA do vídeo<input id="videoCta" placeholder="Ex.: Conheça o Fio&Caixa agora"></label></div><button onclick="generateVideo()">🎬 GERAR VÍDEO</button><div id="videoResult"></div></section>
 <section class="panel"><h2>Histórico</h2><div class="history"><h3>Campanhas</h3>{% for c in campaigns %}<div class="row"><b>#{{c.id}} {{c.title}}</b><span>{{c.created_at}}</span></div>{% else %}<p class="muted">Nenhuma campanha ainda.</p>{% endfor %}<h3>Vídeos</h3>{% for v in videos %}<div class="row"><b>#{{v.id}} {{v.status}}</b><span>{{v.created_at}}</span></div>{% else %}<p class="muted">Nenhum vídeo ainda.</p>{% endfor %}</div></section></main>
 <script>
 let lastCampaign=null;
@@ -26,14 +26,49 @@ async function generateCampaign(){
  campaign.innerHTML=`<span class="tag">CAMPANHA GERADA</span><h2>${esc(lastCampaign.campaign_name)}</h2><p><b>Público:</b> ${esc(lastCampaign.audience)}</p><div class="cols">${list("Copies",lastCampaign.copies)}${list("Títulos",lastCampaign.titles)}${list("Hooks",lastCampaign.hooks)}${list("CTAs",lastCampaign.ctas)}${list("Interesses",lastCampaign.ad_sets.flatMap(x=>x.interests))}${list("Criativos",lastCampaign.creatives)}</div><h3>Roteiros</h3>${list("",lastCampaign.scripts)}<h3>Testes A/B</h3>${list("",lastCampaign.ab_tests.map(x=>x.name+": A="+x.A+" | B="+x.B))}`;
  campaign.scrollIntoView({behavior:"smooth"});
 }
+let videoPollTimer=null;
 async function generateVideo(){
  if(!lastCampaign){alert("Gere uma campanha primeiro.");return}
- videoResult.innerHTML="<div class='loading'>Gerando tarefa...</div>";
- const data={product:product.value,campaign_id:lastCampaign.id,style:style.value,duration:duration.value,ratio:ratio.value,scene:scene.value};
- const r=await fetch("/api/video",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
- const j=await r.json();
- if(j.status==="completed"&&j.video_url) videoResult.innerHTML=`<div class="video"><video controls src="${j.video_url}"></video></div>`;
- else if(j.status==="processing"){videoResult.innerHTML=`<div class="card">⏳ Vídeo em processamento. ID da tarefa: ${esc(j.task_id||"")}. Recarregue depois.</div>`}
- else videoResult.innerHTML=`<div class="card"><h3>Prompt pronto</h3><pre>${esc(j.prompt||"")}</pre><p class="muted">${esc(j.message||j.error||"")}</p></div>`;
+ if(videoPollTimer){clearInterval(videoPollTimer);videoPollTimer=null}
+ videoResult.innerHTML="<div class='card loading'><strong>🎬 Enviando para a Runway...</strong><p class='muted'>O vídeo está sendo criado. Você pode permanecer nesta página enquanto o GrowthPilot acompanha o processamento.</p></div>";
+ const data={product:product.value,campaign_id:lastCampaign.id,style:style.value,duration:duration.value,ratio:ratio.value,scene:scene.value,cta:videoCta.value};
+ try{
+   const r=await fetch("/api/video",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+   const j=await r.json();
+   if(j.status==="processing"){
+      renderVideoProcessing(j);
+      pollVideo(j.id);
+   }else if(j.status==="completed"&&j.video_url){renderVideoReady(j);}
+   else{renderVideoError(j);}
+ }catch(e){videoResult.innerHTML=`<div class="card"><h3>Erro de conexão</h3><p>${esc(e.message||"Não foi possível iniciar a geração.")}</p></div>`}
+}
+function renderVideoProcessing(j){
+ videoResult.innerHTML=`<div class="card video-status"><div class="spinner"></div><h3>🎬 Gerando seu vídeo...</h3><p class="muted">A Runway está processando a tarefa. O GrowthPilot vai atualizar automaticamente.</p><div class="progress-line"><span></span></div><small class="muted">Tarefa: ${esc(j.task_id||"")}</small></div>`;
+}
+function renderVideoReady(j){
+ if(videoPollTimer){clearInterval(videoPollTimer);videoPollTimer=null}
+ const url=esc(j.video_url||"");
+ videoResult.innerHTML=`<div class="card video-ready"><span class="tag">VÍDEO PRONTO</span><h3>Seu anúncio foi gerado 🎉</h3><div class="video"><video controls playsinline src="${url}"></video></div><div class="actions"><a href="${url}" target="_blank" rel="noopener">▶ Abrir vídeo</a><a href="${url}" download class="ghost">⬇ Baixar</a><button class="ghost" onclick="generateVideo()">🔄 Gerar outra versão</button></div><p class="muted tiny">O arquivo é servido pela Runway; para armazenamento permanente, a próxima etapa pode adicionar um storage próprio ao GrowthPilot.</p></div>`;
+}
+function renderVideoError(j){
+ if(videoPollTimer){clearInterval(videoPollTimer);videoPollTimer=null}
+ videoResult.innerHTML=`<div class="card"><h3>⚠️ Não foi possível gerar o vídeo</h3><p>${esc(j.error||j.message||"A geração não foi concluída.")}</p><details><summary>Ver prompt enviado</summary><pre>${esc(j.prompt||"")}</pre></details><p class="muted tiny">Se a variável estiver no Render, confirme também se o serviço foi redeployado após salvá-la e se há créditos disponíveis na conta da Runway.</p></div>`;
+}
+async function pollVideo(id){
+ let attempts=0;
+ videoPollTimer=setInterval(async()=>{
+   attempts++;
+   try{
+     const r=await fetch(`/api/video/${id}`);
+     const j=await r.json();
+     if(j.status==="completed"&&j.video_url){renderVideoReady(j);return}
+     if(j.status==="failed"){renderVideoError(j);return}
+     if(j.status==="processing"&&attempts%4===0){renderVideoProcessing(j)}
+     if(attempts>=200){
+       clearInterval(videoPollTimer);videoPollTimer=null;
+       videoResult.innerHTML=`<div class="card"><h3>⏳ Geração demorando mais que o esperado</h3><p class="muted">A tarefa continua registrada no histórico. Você pode atualizar a página e o GrowthPilot tentará consultar novamente.</p></div>`;
+     }
+   }catch(e){/* próxima consulta tenta novamente */}
+ },3000);
 }
 </script></body></html>
