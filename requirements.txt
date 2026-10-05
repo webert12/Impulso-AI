@@ -1,8 +1,5 @@
-Flask
-Gunicorn
-pandas
-plotly
-SQLAlchemy
-psycopg2-binary
-reportlab
-cryptography
+Flask>=3.1,<4
+Flask-SQLAlchemy>=3.1,<4
+gunicorn>=23,<24
+Werkzeug>=3.1,<4
+runwayml>=4.2,<5
