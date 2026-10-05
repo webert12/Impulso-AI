@@ -125,17 +125,74 @@ def campaign_engine(data):
 
 def build_video_prompt(product, data):
     style = data.get("style", "UGC comercial")
-    duration = data.get("duration", "5")
+    duration = int(data.get("duration", 5))
+    duration = max(2, min(duration, 10))
     ratio = data.get("ratio", "720:1280")
-    scene = data.get("scene", "")
+    if ratio not in {"720:1280", "1280:720"}:
+        ratio = "720:1280"
+    scene = data.get("scene", "").strip()
+    hook = data.get("hook", "").strip()
+    script = data.get("script", "").strip()
+    cta = data.get("cta", "Conheça agora").strip()
     return (
-        f"Vertical social media advertisement, {duration} seconds, ratio {ratio}. "
-        f"Product: {product}. Style: {style}. "
-        f"Create a polished short-form ad in Brazilian Portuguese context. "
-        f"Visual concept: {scene or 'show the problem, the product solution and a clear call to action'}. "
-        f"Do not show guaranteed financial results, fake testimonials, or misleading claims. "
-        f"Keep visual text minimal and leave safe space for captions."
+        f"Create a polished {duration}-second social media advertisement in Brazilian Portuguese context. "
+        f"Product: {product}. Style: {style}. Output ratio: {ratio}. "
+        f"Creative direction: {scene or 'show the problem, demonstrate the product solution, then end with a clear call to action'}. "
+        f"Hook/message: {hook or 'apresente uma dor real do público e mostre a solução de forma objetiva'}. "
+        f"Narrative: {script or 'gancho, demonstração visual do produto, benefício principal e CTA'}. "
+        f"Call to action: {cta}. "
+        f"Use natural Brazilian Portuguese context, professional pacing, realistic visuals, clean composition, "
+        f"and leave safe space for captions. Do not show guaranteed financial results, fake testimonials, "
+        f"fabricated metrics, or misleading claims.\n"
     )
+
+def runway_client():
+    from runwayml import RunwayML
+    return RunwayML()
+
+def normalize_task_status(status):
+    value = str(status or "").lower()
+    mapping = {
+        "pending": "processing",
+        "running": "processing",
+        "processing": "processing",
+        "succeeded": "completed",
+        "completed": "completed",
+        "failed": "failed",
+        "canceled": "failed",
+        "cancelled": "failed",
+    }
+    return mapping.get(value, value or "processing")
+
+def refresh_video_job(job):
+    if job.provider != "runway" or not job.provider_task_id or job.status not in {"processing", "pending"}:
+        return job
+    try:
+        client = runway_client()
+        task = client.tasks.retrieve(job.provider_task_id)
+        raw_status = getattr(task, "status", None)
+        status = normalize_task_status(raw_status)
+        job.status = status
+
+        output = getattr(task, "output", None)
+        if output:
+            if isinstance(output, (list, tuple)):
+                job.video_url = output[0] if output else None
+            elif isinstance(output, str):
+                job.video_url = output
+            if job.video_url:
+                job.status = "completed"
+
+        if status == "failed":
+            details = getattr(task, "failure", None) or getattr(task, "error", None)
+            if details:
+                job.prompt = job.prompt + "\n\n[Runway error] " + str(details)[:1000]
+        db.session.commit()
+    except Exception as e:
+        # Keep the job processing so a temporary provider/network error does not
+        # incorrectly mark a valid Runway task as failed.
+        app.logger.exception("Erro ao consultar tarefa Runway: %s", e)
+    return job
 
 @app.route("/")
 def index():
@@ -205,55 +262,113 @@ def api_campaign_get(cid):
 @login_required
 def api_video():
     data = request.get_json() or {}
-    product = PRODUCTS.get(data.get("product","salao"), PRODUCTS["salao"])["name"]
-    prompt = build_video_prompt(product, data)
-    provider = os.getenv("VIDEO_PROVIDER", "runway")
-    job = VideoJob(user_id=session["user_id"], campaign_id=data.get("campaign_id"), provider=provider, status="draft", prompt=prompt)
-    db.session.add(job); db.session.commit()
+    product_key = data.get("product", "salao")
+    product = PRODUCTS.get(product_key, PRODUCTS["salao"])
+    product_name = product["name"]
 
-    # A geração real é opcional: sem API key, o usuário recebe o prompt pronto.
-    if provider == "runway" and os.getenv("RUNWAYML_API_SECRET"):
+    campaign = None
+    campaign_id = data.get("campaign_id")
+    if campaign_id:
+        campaign = Campaign.query.filter_by(id=campaign_id, user_id=session["user_id"]).first()
+
+    campaign_payload = {}
+    if campaign:
         try:
-            from runwayml import RunwayML
-            client = RunwayML()
-            task = client.image_to_video.create(
-                model=os.getenv("RUNWAY_MODEL", "gen4.5"),
-                prompt_text=prompt,
-                ratio=data.get("ratio","720:1280"),
-                duration=int(data.get("duration",5))
-            )
-            job.provider_task_id = getattr(task, "id", None)
-            job.status = "processing"
-            db.session.commit()
-            return jsonify({"ok":True,"id":job.id,"status":job.status,"task_id":job.provider_task_id,"prompt":prompt})
-        except Exception as e:
-            job.status = "failed"
-            db.session.commit()
-            return jsonify({"ok":False,"id":job.id,"status":"failed","error":str(e),"prompt":prompt}), 200
+            campaign_payload = json.loads(campaign.payload)
+        except Exception:
+            campaign_payload = {}
 
-    return jsonify({"ok":True,"id":job.id,"status":"prompt_ready","prompt":prompt,"message":"Configure RUNWAYML_API_SECRET para gerar o vídeo automaticamente."})
+    hook = data.get("hook") or (campaign_payload.get("hooks") or [""])[0]
+    script = data.get("script") or (campaign_payload.get("scripts") or [""])[0]
+    ctas = campaign_payload.get("ctas") or []
+    cta = data.get("cta") or (ctas[0] if ctas else "Conheça agora")
+    prompt_data = dict(data, hook=hook, script=script, cta=cta)
+    prompt = build_video_prompt(product_name, prompt_data)
+
+    provider = os.getenv("VIDEO_PROVIDER", "runway").lower()
+    job = VideoJob(
+        user_id=session["user_id"],
+        campaign_id=campaign.id if campaign else None,
+        provider=provider,
+        status="draft",
+        prompt=prompt,
+    )
+    db.session.add(job)
+    db.session.commit()
+
+    if provider != "runway":
+        job.status = "prompt_ready"
+        db.session.commit()
+        return jsonify({"ok": True, "id": job.id, "status": job.status, "prompt": prompt, "message": "Provedor de vídeo não configurado."})
+
+    if not os.getenv("RUNWAYML_API_SECRET"):
+        job.status = "prompt_ready"
+        db.session.commit()
+        return jsonify({"ok": True, "id": job.id, "status": job.status, "prompt": prompt, "message": "RUNWAYML_API_SECRET não está disponível no servidor."})
+
+    try:
+        duration = int(data.get("duration", 5))
+        duration = max(2, min(duration, 10))
+        ratio = data.get("ratio", "720:1280")
+        if ratio not in {"720:1280", "1280:720"}:
+            ratio = "720:1280"
+
+        client = runway_client()
+        task = client.image_to_video.create(
+            model=os.getenv("RUNWAY_MODEL", "gen4.5"),
+            prompt_text=prompt,
+            ratio=ratio,
+            duration=duration,
+        )
+
+        job.provider_task_id = getattr(task, "id", None)
+        if not job.provider_task_id:
+            raise RuntimeError("A Runway não retornou o ID da tarefa.")
+        job.status = "processing"
+        db.session.commit()
+        return jsonify({
+            "ok": True,
+            "id": job.id,
+            "status": "processing",
+            "task_id": job.provider_task_id,
+            "prompt": prompt,
+            "message": "Vídeo enviado para a Runway. O GrowthPilot está acompanhando a geração automaticamente."
+        })
+    except Exception as e:
+        job.status = "failed"
+        db.session.commit()
+        app.logger.exception("Falha ao criar vídeo na Runway: %s", e)
+        return jsonify({
+            "ok": False,
+            "id": job.id,
+            "status": "failed",
+            "prompt": prompt,
+            "error": "A Runway recusou ou não conseguiu iniciar a geração. Verifique créditos, modelo e configuração da API no Render.",
+            "technical_error": str(e)[:1200]
+        }), 200
 
 @app.get("/api/video/<int:vid>")
 @login_required
 def api_video_get(vid):
     job = VideoJob.query.filter_by(id=vid, user_id=session["user_id"]).first_or_404()
-    if job.provider == "runway" and job.provider_task_id and os.getenv("RUNWAYML_API_SECRET") and job.status == "processing":
-        try:
-            from runwayml import RunwayML
-            client = RunwayML()
-            task = client.tasks.retrieve(job.provider_task_id)
-            status = getattr(task, "status", None)
-            if status:
-                job.status = str(status).lower()
-            output = getattr(task, "output", None)
-            if output:
-                if isinstance(output, list): job.video_url = output[0]
-                elif isinstance(output, str): job.video_url = output
-                job.status = "completed"
-            db.session.commit()
-        except Exception as e:
-            return jsonify({"ok":False,"error":str(e),"status":job.status})
-    return jsonify({"ok":True,"id":job.id,"status":job.status,"video_url":job.video_url,"prompt":job.prompt})
+    refresh_video_job(job)
+    return jsonify({
+        "ok": True,
+        "id": job.id,
+        "status": job.status,
+        "video_url": job.video_url,
+        "prompt": job.prompt,
+        "task_id": job.provider_task_id
+    })
+
+@app.get("/api/video-config")
+@login_required
+def api_video_config():
+    return jsonify({
+        "provider": os.getenv("VIDEO_PROVIDER", "runway"),
+        "runway_configured": bool(os.getenv("RUNWAYML_API_SECRET")),
+        "model": os.getenv("RUNWAY_MODEL", "gen4.5")
+    })
 
 @app.cli.command("init-db")
 def init_db():
